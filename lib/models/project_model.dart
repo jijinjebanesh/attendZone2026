@@ -7,8 +7,8 @@ class Project_model {
   final DateTime? endDate;
   final List<String> tasks;
   final String? icon;
-  final String assignees;
-  final String link;
+  final List<String> assignees;
+  final String? link;
 
   Project_model({
     required this.projectName,
@@ -20,21 +20,41 @@ class Project_model {
     required this.assignees,
     required this.tasks,
     this.icon,
-    required this.link,
+    this.link,
   });
 
+  /// For lightweight project lists (dashboard / sidebar)
   factory Project_model.fromSimpleJson(Map<String, dynamic> json) {
     return Project_model(
       projectName: json['projectName'] ?? '',
-      statusName: '',
-      completionPercentage: 0.0,
-      priority: null,
-      startDate: null,
-      endDate: null,
-      link: '',
-      tasks: [],
-      assignees: '',
-      icon: null,
+      statusName: json['statusName'] ?? '',
+      completionPercentage:
+          (json['completionPercentage'] as num?)?.toDouble() ?? 0.0,
+      priority: json['priority'],
+      startDate: json['startDate'] != null
+          ? DateTime.parse(json['startDate'])
+          : null,
+      endDate: json['endDate'] != null ? DateTime.parse(json['endDate']) : null,
+      tasks: List<String>.from(json['tasks'] ?? []),
+      assignees: List<String>.from(json['assignees'] ?? []),
+      icon: json['icon'],
+      link: json['link'],
+    );
+  }
+
+  /// For full project details (optional but recommended)
+  factory Project_model.fromJson(Map<String, dynamic> json) {
+    return Project_model(
+      projectName: json['projectName'],
+      statusName: json['statusName'],
+      completionPercentage: (json['completionPercentage'] as num).toDouble(),
+      priority: json['priority'],
+      startDate: DateTime.tryParse(json['startDate'] ?? ''),
+      endDate: DateTime.tryParse(json['endDate'] ?? ''),
+      tasks: List<String>.from(json['tasks']),
+      assignees: List<String>.from(json['assignees']),
+      icon: json['icon'],
+      link: json['link'],
     );
   }
 }

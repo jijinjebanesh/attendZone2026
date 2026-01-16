@@ -6,8 +6,9 @@ import '../models/attendance_model.dart';
 
 final client = http.Client();
 String globalMessage = '';
-String devUrl ="http://192.168.229.5:5000";
-String baseUrl ="https://attendzone-backend.onrender.com";
+String devUrl = "http://192.168.137.1:5000";
+String baseUrl = "https://attendzone-backend.onrender.com";
+
 class Get {
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -22,7 +23,9 @@ class Api {
 
   Future<String> userIpAddress() async {
     try {
-      final response = await http.get(Uri.parse('https://api64.ipify.org?format=json'));
+      final response = await http.get(
+        Uri.parse('https://api64.ipify.org?format=json'),
+      );
       if (response.statusCode == 200) {
         return json.decode(response.body)["ip"];
       } else {
@@ -44,17 +47,11 @@ class Api {
 
       var url = Uri.parse('$devUrl/api/v1/auth/login');
       print("Loading...............qw4qw.4q324.423.");
-      var body = jsonEncode({
-        'userid': userid,
-        'password': password,
-        'ip': ip,
-      });
+      var body = jsonEncode({'userid': userid, 'password': password, 'ip': ip});
 
       var response = await http.post(
         url,
-        headers: <String, String>{
-          'Content-Type': 'application/json',
-        },
+        headers: <String, String>{'Content-Type': 'application/json'},
         body: body,
       );
 
@@ -68,7 +65,7 @@ class Api {
           final String userid = data['userId']?.toString() ?? '';
           final String username = data['username']?.toString() ?? '';
           final String email = data['email']?.toString() ?? '';
-          final String? profileBase64 = data['profile'] as String?;
+          final String profileBase64 = data['profile']?.toString() ?? '';
 
           await prefs.setString('userid', userid);
           await prefs.setString('username', username);
@@ -176,8 +173,7 @@ class Atten {
         throw Exception('Authorization token not found');
       }
 
-      var url = Uri.parse(
-          '$devUrl/api/v1/attendance/mark');
+      var url = Uri.parse('$devUrl/api/v1/attendance/mark');
       var response = await http.post(
         url,
         headers: <String, String>{
@@ -197,7 +193,7 @@ class Atten {
     }
   }
 
-  Future<void> getAttendance(String userId, String date) async {
+  Future<void> getAttendance(String email, String date) async {
     try {
       String? authToken = await Get().getToken();
       if (authToken == null) {
@@ -205,7 +201,8 @@ class Atten {
       }
 
       var url = Uri.parse(
-          '$devUrl/api/v1/attendance/show?id=$userId&date=$date');
+        '$devUrl/api/v1/attendance/show?email=$email&date=$date',
+      );
       var response = await http.get(
         url,
         headers: <String, String>{
@@ -215,13 +212,24 @@ class Atten {
       );
 
       if (response.statusCode == 200) {
-        List<dynamic> data = jsonDecode(response.body);
+        dynamic decodedData = jsonDecode(response.body);
         final SharedPreferences prefs = await SharedPreferences.getInstance();
-        for (var entry in data) {
-          prefs.setString('time_in', entry['time_in'] ?? '');
-          prefs.setString('time_out', entry['time_out'] ?? '');
-          print("Time in: ${entry['time_in'] ?? 'N/A'}");
-          print("Time out: ${entry['time_out'] ?? 'N/A'}");
+
+        // Handle both List and Map responses from the API
+        if (decodedData is List) {
+          // If it's a list, iterate through entries
+          for (var entry in decodedData) {
+            prefs.setString('time_in', entry['time_in'] ?? '');
+            prefs.setString('time_out', entry['time_out'] ?? '');
+            print("Time in: ${entry['time_in'] ?? 'N/A'}");
+            print("Time out: ${entry['time_out'] ?? 'N/A'}");
+          }
+        } else if (decodedData is Map) {
+          // If it's a map, handle single object
+          prefs.setString('time_in', decodedData['time_in'] ?? '');
+          prefs.setString('time_out', decodedData['time_out'] ?? '');
+          print("Time in: ${decodedData['time_in'] ?? 'N/A'}");
+          print("Time out: ${decodedData['time_out'] ?? 'N/A'}");
         }
       } else {
         print('Failed to fetch data: ${response.statusCode}');
@@ -239,7 +247,8 @@ class Atten {
       }
 
       var url = Uri.parse(
-          '$devUrl/api/v1/attendance/update?id=$userId&date=$date');
+        '$devUrl/api/v1/attendance/update?id=$userId&date=$date',
+      );
       var body = jsonEncode({"time_out": timeout});
 
       var response = await http.post(
@@ -272,8 +281,7 @@ class Atten {
       var date = '${now.year}-${now.month}-${now.day}';
 
       var response = await http.post(
-        Uri.parse(
-            '$devUrl/api/v1/user/checkAttendance'),
+        Uri.parse('$devUrl/api/v1/user/checkAttendance'),
         headers: <String, String>{
           'Content-Type': 'application/json',
           'Authorization': authToken,
@@ -296,20 +304,22 @@ class Atten {
     }
   }
 }
+
 class ApiService {
-  Future<List<AttendanceEntry>> fetchAttendanceData(String userId) async {
+  Future<List<AttendanceEntry>> fetchAttendanceData(String email) async {
     String? authToken = await Get().getToken();
-    var url = Uri.parse(
-        '$devUrl/api/v1/attendance/attendance?id=$userId');
-    var response = await http.get(
+    var url = Uri.parse('$devUrl/api/v1/attendance/attendance');
+    var response = await http.post(
       url,
+      body: jsonEncode({'email': email}),
       headers: <String, String>{
         'Content-Type': 'application/json',
         'Authorization': authToken!,
       },
     );
     if (response.statusCode == 200) {
-      List<dynamic> data = jsonDecode(response.body);
+      dynamic decodedData = jsonDecode(response.body);
+      List<dynamic> data = decodedData is List ? decodedData : [decodedData];
       return data.map((entry) => AttendanceEntry.fromJson(entry)).toList();
     } else {
       throw Exception('Failed to fetch data');

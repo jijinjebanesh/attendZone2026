@@ -18,6 +18,7 @@ void main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+
   // Load environment variables
   await dotenv.load(fileName: '.env');
   await SharedPrefs().init();
@@ -47,6 +48,7 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
       theme: lightMode,

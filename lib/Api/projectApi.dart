@@ -12,35 +12,28 @@ class GetEmail {
   }
 }
 
-class ChatApi {
+class ProjectApi {
   final String baseUrl = 'https://attendzone-backend.onrender.com/api/v1/chat';
-  static final  String devUrl = "http://192.168.137.1:5000";
+  static final String devUrl = "http://192.168.137.1:5000";
   // Method to get chat messages for a given email (static)
-  static Future<List<dynamic>> getChatMessages(String email) async {
-    //String? authToken = await Get().getToken();
-    final url = Uri.parse('$devUrl/api/v1/chat/messages');
-   // email = GetEmail().getEmail() as String;
+static Future<List<Project_model>> getUserProjects(String email) async {
+    final url = Uri.parse('$devUrl/api/v1/projects/my-projects');
     final response = await http.post(
       url,
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-        //'Authorization': authToken!,
-      },
+      headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email}),
     );
 
     if (response.statusCode == 200) {
-      print('call successful');
-      List<dynamic> messages = jsonDecode(response.body);
-      print("Fetched ${messages.length} chat messages from server.");
-      await _saveMessagesToSharedPrefs(messages);
-      return messages;
-    } else if (response.statusCode == 404) {
-      print('No chat messages found for this email');
-      return [];
-    } else {
-      throw Exception('Failed to fetch chat messages: ${response.statusCode}');
+      final List data = jsonDecode(response.body);
+      return data.map((e) => Project_model.fromSimpleJson(e)).toList();
     }
+
+    if (response.statusCode == 404) {
+      return [];
+    }
+
+    throw Exception('Failed to fetch projects');
   }
 
   Future<List<Project_model>> getProjects() async {

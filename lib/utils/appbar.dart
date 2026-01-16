@@ -29,7 +29,7 @@ class EAppBar extends StatelessWidget implements PreferredSizeWidget {
         horizontal: ESizes.md,
       ),
       child: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.onSurface,
+       // backgroundColor: Theme.of(context).colorScheme.onSurface,
         automaticallyImplyLeading: false,
         leading: showBackArrow
             ? IconButton(

@@ -1,12 +1,15 @@
-import 'package:attendzone_new/helper_functions.dart';
-import 'package:attendzone_new/utils/appbar.dart';
+import 'package:attendzone_new/Api/Api.dart';
+import 'package:attendzone_new/api/chatApi.dart'; // Import your ChatApi
+import 'package:attendzone_new/models/attendance_model.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:badges/badges.dart' as badges;
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:percent_indicator/linear_percent_indicator.dart';
 
 class AttendancePage extends StatefulWidget {
   const AttendancePage({super.key});
@@ -21,44 +24,69 @@ class _AttendancePageState extends State<AttendancePage> {
   late DateTime _selectedDate;
   double totalHours = 0;
   double attendancePercentage = 0;
-  int _notificationCount = 3;
-  String? userId;
+  int _notificationCount = 0;
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
-    _loadId();
+    _refreshAllData();
   }
 
-  Future<void> _loadId() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    setState(() {
-      userId = prefs.getString('userid') ?? 'U123'; // fallback for development
-    });
-    _fetchDataForUser();
+  Future<void> _refreshAllData() async {
+    await Future.wait([_fetchDataForUser(), _fetchUnreadNotifications()]);
+  }
+
+  Future<void> _fetchUnreadNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String email = prefs.getString('email') ?? '';
+      if (email.isNotEmpty) {
+        final messages = await ChatApi.getChatMessages(email);
+        if (mounted) {
+          setState(() {
+            _notificationCount = messages.where((m) {
+              // Handle both model objects and raw maps
+              final readBy = m is Map
+                  ? (m['readBy'] as List? ?? [])
+                  : (m.readBy ?? []);
+
+              // Check if email is in readBy list (handles both String list and Map list)
+              final isRead = readBy.any((r) {
+                if (r is Map) {
+                  return r['reader'] == email;
+                } else if (r is String) {
+                  return r == email;
+                }
+                return false;
+              });
+
+              return !isRead;
+            }).length;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Notification Error: $e");
+    }
   }
 
   Future<void> _fetchDataForUser() async {
-    setState(() {
-      _isLoading = true;
-    });
+    if (!mounted) return;
+    setState(() => _isLoading = true);
 
     try {
-      // USE DUMMY DATA instead of API!
-      _attendanceData = await DummyAttendanceService().fetchAttendanceData(userId!);
-      _calculateTotalHoursAndAttendance();
+      final prefs = await SharedPreferences.getInstance();
+      String email = prefs.getString('email') ?? '';
+
+      // Using ApiService from your Api.dart
+      _attendanceData = await ApiService().fetchAttendanceData(email);
+
+      if (mounted) _calculateTotalHoursAndAttendance();
     } catch (e) {
-      print('Failed to load data: $e');
-      setState(() {
-        _attendanceData = [];
-        totalHours = 0;
-        attendancePercentage = 0;
-      });
+      debugPrint('Attendance Fetch Error: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -67,326 +95,370 @@ class _AttendancePageState extends State<AttendancePage> {
     int selectedYear = _selectedDate.year;
 
     List<AttendanceEntry> attendanceForMonth = _attendanceData
-        .where((entry) =>
-    entry.date.month == selectedMonth && entry.date.year == selectedYear)
+        .where(
+          (entry) =>
+              entry.date.month == selectedMonth &&
+              entry.date.year == selectedYear,
+        )
         .toList();
 
-    int totalMinutes = attendanceForMonth.fold(0, (sum, entry) {
-      if (entry.timeOut.hour >= entry.timeIn.hour) {
-        return sum +
-            (entry.timeOut.hour - entry.timeIn.hour) * 60 +
-            (entry.timeOut.minute - entry.timeIn.minute);
-      } else {
-        return sum +
-            ((24 - entry.timeIn.hour) + entry.timeOut.hour) * 60 +
-            (entry.timeOut.minute - entry.timeIn.minute);
-      }
-    });
+    double totalMins = 0;
+    for (var entry in attendanceForMonth) {
+      // Professional logic: Convert TimeOfDay to minutes since midnight for precision
+      int startMins = entry.timeIn.hour * 60 + entry.timeIn.minute;
+      int endMins = entry.timeOut.hour * 60 + entry.timeOut.minute;
 
-    int expectedWorkingMinutes = 8 * 60 * _getTotalWorkingDays(selectedMonth, selectedYear);
+      if (endMins > startMins) {
+        totalMins += (endMins - startMins);
+      } else if (entry.timeOut.hour != 0 || entry.timeOut.minute != 0) {
+        // Handle overnight shifts if applicable
+        totalMins += (1440 - startMins) + endMins;
+      }
+    }
+
+    int workingDays = _getTotalWorkingDays(selectedMonth, selectedYear);
+    int expectedMins = 8 * 60 * workingDays;
 
     setState(() {
-      totalHours = totalMinutes / 60;
-      attendancePercentage = expectedWorkingMinutes > 0
-          ? (totalMinutes / expectedWorkingMinutes) * 100
-          : 0;
+      totalHours = totalMins / 60;
+      attendancePercentage = expectedMins > 0
+          ? (totalMins / expectedMins).clamp(0.0, 1.0)
+          : 0.0;
     });
   }
 
   int _getTotalWorkingDays(int month, int year) {
-    int totalDaysInMonth = DateTime(year, month + 1, 0).day;
-    int totalWorkingDays = 0;
-
-    for (int i = 1; i <= totalDaysInMonth; i++) {
-      DateTime date = DateTime(year, month, i);
-      if (date.weekday != DateTime.saturday &&
-          date.weekday != DateTime.sunday) {
-        totalWorkingDays++;
-      }
+    int days = DateTime(year, month + 1, 0).day;
+    int workDays = 0;
+    for (int i = 1; i <= days; i++) {
+      int weekday = DateTime(year, month, i).weekday;
+      if (weekday != DateTime.saturday && weekday != DateTime.sunday)
+        workDays++;
     }
-
-    return totalWorkingDays;
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2021),
-      lastDate: DateTime.now(),
-    );
-
-    if (picked != null && picked != _selectedDate) {
-      setState(() {
-        _selectedDate = picked;
-      });
-      _fetchDataForUser();
-    }
+    return workDays;
   }
 
   @override
   Widget build(BuildContext context) {
-    double screenWidth = MediaQuery.of(context).size.width;
-    double screenHeight = MediaQuery.of(context).size.height;
-
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.onSurface,
-      appBar: EAppBar(
-        title: Text(
-          'Attendance History',
-          style: GoogleFonts.rubik(
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: _buildAppBar(),
+      body: RefreshIndicator(
+        onRefresh: _refreshAllData,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            children: [
+              _buildSummaryCard(),
+              _buildCalendarSection(),
+              _buildHistoryHeader(),
+              _buildAttendanceList(),
+              const SizedBox(height: 20),
+            ],
           ),
         ),
-        actions: [
-          IconButton(
-            onPressed: () {
-              context.push('/announcements');
-            },
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      elevation: 0,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      systemOverlayStyle: SystemUiOverlayStyle.dark,
+      title: Text(
+        'Attendance',
+        style: GoogleFonts.rubik(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.bold,
+          fontSize: 22,
+        ),
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 16.0),
+          child: IconButton(
+            onPressed: () => context.push('/announcements'),
             icon: badges.Badge(
+              showBadge: _notificationCount > 0,
               badgeContent: Text(
                 '$_notificationCount',
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Colors.white, fontSize: 10),
               ),
-              child: Icon(Iconsax.message, color: Theme.of(context).colorScheme.primary),
+              badgeStyle: const badges.BadgeStyle(badgeColor: Colors.red),
+              child: Icon(
+                Iconsax.message,
+                color: Theme.of(context).colorScheme.onSurface,
+                size: 26,
+              ),
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSummaryCard() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.primary,
+            Theme.of(context).colorScheme.secondary,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 30, 10, 0),
-            child: Container(
-              height: 350,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                border: Border.all(color: Colors.orange),
-                borderRadius: BorderRadius.circular(25),
-              ),
-              child: Theme(
-                data: ThemeData.light().copyWith(
-                  colorScheme: ColorScheme.light(
-                    primary: Colors.orange,
-                    onPrimary: Colors.white,
-                    onSurface: Theme.of(context).colorScheme.primary,
-                  ),
-                  textTheme: GoogleFonts.rubikTextTheme(
-                    Theme.of(context).textTheme.apply(
-                      bodyColor: Theme.of(context).colorScheme.primary,
-                      displayColor: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-                child: CalendarDatePicker(
-                  initialDate: _selectedDate,
-                  firstDate: DateTime(2021),
-                  lastDate: DateTime.now(),
-                  onDateChanged: (DateTime newDate) {
-                    setState(() {
-                      _selectedDate = newDate;
-                    });
-                    _fetchDataForUser();
-                  },
-                ),
-              ),
-            ),
+          Text(
+            "Monthly Summary",
+            style: GoogleFonts.rubik(color: Colors.white70, fontSize: 14),
           ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _attendanceData.isEmpty
-                ? _buildAbsentWidget(screenHeight, screenWidth)
-                : _buildAttendanceList(screenWidth, screenHeight),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "${totalHours.toStringAsFixed(1)} Hrs",
+                style: GoogleFonts.rubik(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                "${(attendancePercentage * 100).toInt()}%",
+                style: GoogleFonts.rubik(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          LinearPercentIndicator(
+            lineHeight: 8.0,
+            percent: attendancePercentage,
+            backgroundColor: Colors.white24,
+            progressColor: Colors.orangeAccent,
+            barRadius: const Radius.circular(10),
+            padding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Goal: 160 hours / month",
+            style: GoogleFonts.rubik(color: Colors.white60, fontSize: 12),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAttendanceList(double screenWidth, double screenHeight) {
-    List<AttendanceEntry> filteredData = _attendanceData
-        .where((entry) =>
-    entry.date.year == _selectedDate.year &&
-        entry.date.month == _selectedDate.month &&
-        entry.date.day == _selectedDate.day)
+  Widget _buildCalendarSection() {
+    bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: isDarkMode ? const Color(0xFF2C2C2C) : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDarkMode ? Colors.grey[800]! : Colors.grey[200]!,
+        ),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: isDarkMode
+              ? const ColorScheme.dark(
+                  primary: Color(0xFFFFD700), // Orange highlight
+                  surface: Color(0xFF2C2C2C),
+                )
+              : ColorScheme.light(
+                  primary: Color(0xFFFF9800), // Orange highlight
+                  surface: Colors.white,
+                ),
+        ),
+        child: CalendarDatePicker(
+          initialDate: _selectedDate,
+          firstDate: DateTime(2021),
+          lastDate: DateTime.now(),
+
+          onDateChanged: (date) {
+            setState(() => _selectedDate = date);
+            _calculateTotalHoursAndAttendance();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistoryHeader() {
+    bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 25, 20, 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            "Daily Details",
+            style: GoogleFonts.rubik(
+              color: isDarkMode ? Colors.white : Colors.black,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
+          ),
+          Text(
+            DateFormat('MMMM yyyy').format(_selectedDate),
+            style: GoogleFonts.rubik(
+              color: isDarkMode ? Colors.grey[400] : Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttendanceList() {
+    if (_isLoading)
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: CircularProgressIndicator(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFFFFD700)
+              : const Color(0xFFFF9800),
+        ),
+      );
+
+    final dailyData = _attendanceData
+        .where(
+          (e) =>
+              e.date.year == _selectedDate.year &&
+              e.date.month == _selectedDate.month &&
+              e.date.day == _selectedDate.day,
+        )
         .toList();
 
-    return filteredData.isNotEmpty
-        ? ListView.builder(
-      itemCount: filteredData.length,
-      itemBuilder: (context, index) {
-        final attendanceEntry = filteredData[index];
-        String formattedDate =
-        DateFormat('dd/MM/yyyy').format(attendanceEntry.date);
-
-        return Column(
+    if (dailyData.isEmpty) {
+      bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+      return Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(30),
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: isDarkMode ? const Color(0xFF2C2C2C) : Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: isDarkMode ? Colors.grey[800]! : Colors.grey[100]!,
+          ),
+        ),
+        child: Column(
           children: [
-            SizedBox(height: screenHeight * .01),
-            Container(
-              height: screenHeight * 0.21,
-              width: screenWidth * 0.9,
-              decoration: BoxDecoration(
-                color: Colors.orange,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(height: screenHeight * .01),
-                  Center(
-                    child: Text(
-                      'Date: $formattedDate',
-                      style: GoogleFonts.lato(
-                        color: Colors.white,
-                        fontSize: 25,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: screenHeight * .03),
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: screenWidth * 0.02),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Time In: ${attendanceEntry.timeIn.format(context)}',
-                          style: GoogleFonts.rubik(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: screenHeight * .01),
-                        Text(
-                          'Time Out: ${attendanceEntry.timeOut.format(context)}',
-                          style: GoogleFonts.rubik(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: screenHeight * .03),
-                        Text(
-                          'Attendance Percentage: ${attendancePercentage.toStringAsFixed(2)}%',
-                          style: GoogleFonts.rubik(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+            Icon(
+              Iconsax.calendar_remove,
+              size: 48,
+              color: isDarkMode ? Colors.grey[600] : Colors.grey[300],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "No record found for this date",
+              style: GoogleFonts.rubik(
+                color: isDarkMode ? Colors.grey[400] : Colors.grey[500],
               ),
             ),
           ],
-        );
-      },
-    )
-        : _buildAbsentWidget(screenHeight, screenWidth);
-  }
-
-  Widget _buildAbsentWidget(double screenHeight, double screenWidth) {
-    return Padding(
-      padding: const EdgeInsets.all(10.0),
-      child: Container(
-        height: screenHeight * 0.19,
-        width: screenWidth * 0.9,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Center(
-          child: Text(
-            'No attendance data found for this date',
-            style: GoogleFonts.rubik(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 25,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Your attendance model
-class AttendanceEntry {
-  final DateTime date;
-  final TimeOfDay timeIn;
-  final TimeOfDay timeOut;
-
-  AttendanceEntry({
-    required this.date,
-    required this.timeIn,
-    required this.timeOut,
-  });
-
-  factory AttendanceEntry.fromJson(Map<String, dynamic> json) {
-    final date = DateTime.parse(json['date']);
-    final timeIn = _parseTime(json['timeIn']);
-    final timeOut = _parseTime(json['timeOut']);
-
-    return AttendanceEntry(
-      date: date,
-      timeIn: timeIn,
-      timeOut: timeOut,
-    );
-  }
-
-  static TimeOfDay _parseTime(String? timeString) {
-    if (timeString != null && timeString.isNotEmpty) {
-      final timeParts = timeString.split(':').map(int.parse).toList();
-      return TimeOfDay(hour: timeParts[0], minute: timeParts[1]);
-    } else {
-      // If timeString is null or empty, return default time (midnight)
-      return const TimeOfDay(hour: 0, minute: 0);
-    }
-  }
-}
-
-// ------------ Dummy Attendance Service ---------------
-class DummyAttendanceService {
-  Future<List<AttendanceEntry>> fetchAttendanceData(String userId) async {
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 900));
-    // For realism: only weekdays, randomize time-in/time-out a bit
-    DateTime now = DateTime.now();
-    List<AttendanceEntry> entries = [];
-
-    // Let's make 20 recent workdays worth of sample data for the current month
-    DateTime startDate = DateTime(now.year, now.month, 1);
-    DateTime endDate = now;
-
-    for (DateTime date = startDate;
-    date.isBefore(endDate) || date.isAtSameMomentAs(endDate);
-    date = date.add(const Duration(days: 1))) {
-      if (date.weekday == DateTime.saturday || date.weekday == DateTime.sunday) continue;
-
-      // Randomize times just a bit each day
-      int inHour = 9 + (date.day % 2);   // 09:00 or 10:00
-      int inMinute = [0, 5, 10, 15][date.day % 4];
-
-      int outHour = inHour + 8 + (date.day % 2); // 17/18
-      int outMinute = [0, 10, 20, 30][date.day % 4];
-
-      entries.add(
-        AttendanceEntry(
-          date: date,
-          timeIn: TimeOfDay(hour: inHour, minute: inMinute),
-          timeOut: TimeOfDay(hour: outHour, minute: outMinute),
         ),
       );
     }
 
-    return entries;
+    return Column(
+      children: dailyData.map((entry) {
+        bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isDarkMode ? const Color(0xFF2C2C2C) : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: isDarkMode
+                    ? Colors.black.withOpacity(0.3)
+                    : Colors.black.withOpacity(0.03),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800).withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Iconsax.clock,
+                  color: Color(0xFFFF9800),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Work Session",
+                      style: GoogleFonts.rubik(
+                        color: isDarkMode ? Colors.white : Colors.black,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      "${entry.timeIn.format(context)} - ${entry.timeOut.format(context)}",
+                      style: GoogleFonts.rubik(
+                        color: isDarkMode ? Colors.grey[400] : Colors.grey,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(isDarkMode ? 0.2 : 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "Present",
+                  style: GoogleFonts.rubik(
+                    color: Colors.green[isDarkMode ? 300 : 700],
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 }

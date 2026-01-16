@@ -1,3 +1,4 @@
+import '../Api/taskApi.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -7,36 +8,44 @@ import '../models/task_model.dart';
 class TaskCard extends StatefulWidget {
   final Task_model task;
 
-  TaskCard({required this.task});
+  const TaskCard({super.key, required this.task});
 
   @override
-  _TaskCardState createState() => _TaskCardState();
+  State<TaskCard> createState() => _TaskCardState();
 }
 
 class _TaskCardState extends State<TaskCard> {
-  //late Future<List<Task_model>> _fetchTasksFuture;
+  static const List<String> statusList = [
+    'Not Started',
+    'In Progress',
+    'Completed',
+  ];
+
+  late String _currentStatus;
+  bool _updating = false;
 
   @override
   void initState() {
     super.initState();
-   // _fetchTasksFuture = fetchTasks();
+    // Status is already normalized at the model level
+    _currentStatus = widget.task.statusName;
+
+    // Safety check: ensure status is in the list
+    if (!statusList.contains(_currentStatus)) {
+      _currentStatus = statusList.first; // Default to 'Not Started'
+      debugPrint(
+        'TaskCard WARNING - Status "$_currentStatus" not in statusList, using default: "Not Started"',
+      );
+    }
+    debugPrint('TaskCard initState - Status: "$_currentStatus"');
   }
 
-  // Future<List<Task_model>> fetchTasks() async {
-  //   try {
-  //     List<Task_model> fetchedTasks = await fetchNotionTasks();
-  //     if (fetchedTasks.isEmpty) {
-  //       await fetchNotionTasks();
-  //     }
-  //     return fetchedTasks;
-  //   } catch (e) {
-  //     print('Error fetching tasks: $e');
-  //     return [];
-  //   }
-  // }
+  @override
+  void dispose() {
+    super.dispose();
+  }
 
-  Color getCompletionColor(String priority) {
-    // Define colors based on priority here
+  Color getPriorityColor(String? priority) {
     switch (priority) {
       case 'High':
         return Colors.red;
@@ -49,25 +58,42 @@ class _TaskCardState extends State<TaskCard> {
     }
   }
 
-  Color getStatusColor(String statusName, BuildContext context) {
-    // Define colors based on status here
-    switch (statusName) {
-      case 'Done':
+  Color getStatusColor(String status) {
+    switch (status) {
+      case 'Completed':
         return Colors.green;
-      case 'In progress':
+      case 'In Progress':
         return Colors.blue;
-      case 'Not started':
+      case 'Not Started':
         return Colors.red;
       default:
         return Colors.grey;
     }
   }
 
+  Future<void> _updateStatus(String newStatus) async {
+    setState(() => _updating = true);
+
+    try {
+      // await updateStatus(widget.task.task_id, newStatus);
+
+      // optimistic UI update
+      setState(() {
+        _currentStatus = newStatus;
+      });
+    } catch (e) {
+      debugPrint('Failed to update status: $e');
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to update status')));
+    } finally {
+      setState(() => _updating = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final task = widget.task;
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
       child: Container(
@@ -78,94 +104,95 @@ class _TaskCardState extends State<TaskCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(height: screenWidth * .02),
-            Row(
-              children: [
-                SizedBox(width: screenWidth * .02),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 2, 10, 0),
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      'Task: ${task.taskName}',
-                      style: GoogleFonts.rubik(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 150,
-              width: 360,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(15, 8, 2, 0),
-                child: SingleChildScrollView(
-                  child: Text(task.Description, style: TextStyle(color: Colors.yellow),),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                widget.task.taskName,
+                style: GoogleFonts.rubik(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
             ),
+            const SizedBox(height: 8),
             Padding(
-              padding: const EdgeInsets.fromLTRB(190, 5, 0, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                widget.task.Description,
+                style: GoogleFonts.rubik(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
+                  // Priority indicator
                   Container(
-                    height: 10,
                     width: 10,
-                    color: getCompletionColor('${task.priority}'),
+                    height: 10,
+                    color: getPriorityColor(widget.task.priority),
                   ),
-                  SizedBox(width: screenWidth * .01),
+                  const SizedBox(width: 6),
                   Text(
-                    '${task.priority}',
-                    style: GoogleFonts.rubik(
-                      fontSize: 11,
+                    widget.task.priority ?? 'N/A',
+                    style: TextStyle(
                       color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
-                  SizedBox(width: screenWidth * .025),
+
+                  const Spacer(),
+
+                  // Status dropdown
                   Container(
-                    height: 25,
-                    width: 90,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: getStatusColor(task.statusName, context),
+                      color: getStatusColor(_currentStatus),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Center(
-                      child: DropdownButton<String>(
-                        value: task.statusName,
-                        onChanged: (String? newValue) async {
-                          if (newValue != null) {
-                            //await updateStatus(task.task_id, newValue);
-                            setState(() {
-                              // Refresh the task card state
-                            });
-                          }
-                        },
-                        items: <String>[
-                          'Done',
-                          'In progress',
-                          'Not started',
-                        ].map<DropdownMenuItem<String>>(
-                              (String value) {
-                            return DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(
-                                value,
-                                style: GoogleFonts.rubik(
-                                  fontSize: 11,
-                                  color: Theme.of(context).colorScheme.primary,
+                    child: _updating
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : DropdownButton<String>(
+                            value: _currentStatus,
+                            underline: const SizedBox(),
+                            dropdownColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainer,
+                            iconEnabledColor: Colors.white,
+                            onChanged: (String? newValue) {
+                              if (newValue != null &&
+                                  newValue != _currentStatus) {
+                                _updateStatus(newValue);
+                              }
+                            },
+                            items: statusList.map((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(
+                                  value,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
-                        ).toList(),
-                        underline: Container(),
-                      ),
-                    ),
+                              );
+                            }).toList(),
+                          ),
                   ),
                 ],
               ),

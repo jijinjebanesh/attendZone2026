@@ -140,7 +140,7 @@ class _AnnouncementState extends State<Announcements> {
 
   Future<List<Map<String, dynamic>>> getPreviousAnnouncements() async {
     try {
-      const String apiUrl = 'https://attendzone-backend.onrender.com/api/v1/announcements';
+      const String apiUrl = 'http://192.168.137.1:5000/api/v1/announcements'; //https://attendzone-backend.onrender.com
       final response = await http.get(Uri.parse(apiUrl));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);

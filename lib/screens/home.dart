@@ -1,18 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:attendzone_new/auth/FDF.dart';
-import 'package:attendzone_new/auth/person.dart';
-import 'package:attendzone_new/helper_functions.dart';
+
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../Api/Api.dart';
-import '../Api/chatApi.dart';
-import '../auth/facedetectionview.dart';
-import '../popups/fullscreen_loaders.dart';
 import 'Projects.dart';
 import 'attendance_page.dart';
 import 'dashboard.dart';
@@ -28,76 +20,37 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   late PageController _pageController;
-  String? Email;
-  String? usrName;
-  List<int> profileBytes = [];
+
+  /// Raw bytes (optional, kept if needed elsewhere)
+  Uint8List? _profileBytes;
+
+  /// 🔥 Cached ImageProvider (IMPORTANT)
+  ImageProvider? _profileImageProvider;
 
   @override
   void initState() {
     super.initState();
-    _check();
-   // _loadProfileData();
     _pageController = PageController(initialPage: _selectedIndex);
+    _loadProfileImage();
   }
 
-  // Future<void> _loadProfileData() async {
-  //   // Dummy data simulation
-  //   setState(() {
-  //     Email = 'dummy@example.com';
-  //     usrName = 'Dummy User';
-  //
-  //     // Base64 for a 1x1 transparent PNG
-  //     const base64Profile = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2N8+/btfwAJ6AP9US8GlwAAAABJRU5ErkJggg==';
-  //     profileBytes = base64Decode(base64Profile);
-  //   });
-  //
-  //  // _fetchChatMessages(); // You can comment this if you want to avoid Chat API call
-  // }
-
-  Future<void> _check() async {
+  Future<void> _loadProfileImage() async {
     try {
-      // Dummy simulation
-      debugPrint("Running _check with dummy data");
+      final prefs = await SharedPreferences.getInstance();
+      final base64String = prefs.getString('profile');
 
-      await Future.delayed(const Duration(milliseconds: 800));
+      if (base64String != null && base64String.isNotEmpty) {
+        final bytes = base64Decode(base64String);
 
-      EFullScreenLoader.openLoadingDialog('Loading...', context);
-
-      await Future.delayed(const Duration(seconds: 2));
-      EFullScreenLoader.stopLoading(context);
-
-      // Simulate IP validation fail/success (optional)
-      bool isIpValid = true;
-
-      if (!isIpValid) {
-        EHelperFunctions.showSnackBar(context, 'IP invalid');
+        setState(() {
+          _profileBytes = bytes;
+          _profileImageProvider = MemoryImage(bytes); // ✅ cached ONCE
+        });
       }
-
-      // Uncomment below to simulate face detection logic (optional)
-      // List<Person> personList = await FaceDect().enrollPerson();
-      // if (personList.isNotEmpty) {
-      //   Navigator.push(
-      //     context,
-      //     MaterialPageRoute(
-      //       builder: (context) => FaceRecognitionView(personList: personList),
-      //     ),
-      //   );
-      // }
-
     } catch (e) {
-      print('An error occurred: $e');
+      debugPrint('Profile image load error: $e');
     }
   }
-
-  // Future<void> _fetchChatMessages() async {
-  //   if (Email != null) {
-  //     try {
-  //     //  await ChatApi.getChatMessages(Email!);
-  //     } catch (e) {
-  //       print('Error fetching chat messages: $e');
-  //     }
-  //   }
-  // }
 
   @override
   void dispose() {
@@ -106,13 +59,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onItemTapped(int index) {
+    if (_selectedIndex == index) return;
+
     setState(() {
       _selectedIndex = index;
     });
+
     _pageController.jumpToPage(index);
   }
 
   void _onPageChanged(int index) {
+    if (_selectedIndex == index) return;
+
     setState(() {
       _selectedIndex = index;
     });
@@ -124,58 +82,147 @@ class _HomePageState extends State<HomePage> {
       body: PageView(
         controller: _pageController,
         onPageChanged: _onPageChanged,
-        children: const <Widget>[
+        physics: const NeverScrollableScrollPhysics(),
+        children: const [
           MyHomePage(title: ''),
           Projects(),
           AttendancePage(),
           Profile(),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        items: <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Iconsax.home, size: 26),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Iconsax.briefcase, size: 26),
-            label: 'Projects',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Iconsax.calendar_1, size: 26),
-            label: 'History',
-          ),
-          BottomNavigationBarItem(
-            icon: Stack(
-              alignment: Alignment.center,
-              children: [
-                Container(
-                  height: 30,
-                  width: 30,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.orange),
-                  ),
-                  child: CircleAvatar(
-                    radius: 50,
-                    backgroundImage: NetworkImage('https://fxcams.in/assets/img/student/b70c44fea2b026f0e56300d26efe4b96.JPG'),
-                    backgroundColor: Colors.transparent,
-                    onBackgroundImageError: (error, stackTrace) {
-                      print("Image failed to load: $error");
-                    },
-                  ),
-                ),
-              ],
-            ),
-            label: 'Profile',
+      bottomNavigationBar: _buildBottomNavBar(context),
+    );
+  }
+
+  Widget _buildBottomNavBar(BuildContext context) {
+    return Container(
+      height: 80,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(25),
+          topRight: Radius.circular(25),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, -6),
           ),
         ],
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        selectedItemColor: Colors.orange,
-        unselectedItemColor: Colors.grey,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildNavItem(0, Iconsax.home),
+            _buildNavItem(1, Iconsax.briefcase),
+            _buildNavItem(2, Iconsax.calendar_1),
+            _buildProfileItem(3, _profileImageProvider),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(int index, IconData icon) {
+    final isSelected = _selectedIndex == index;
+
+    return GestureDetector(
+      onTap: () => _onItemTapped(index),
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            height: isSelected ? 45 : 40,
+            width: isSelected ? 45 : 40,
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? const Color(0xFFFF9800).withOpacity(0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              icon,
+              size: isSelected ? 26 : 24,
+              color: isSelected ? const Color(0xFFFF9800) : Colors.grey,
+            ),
+          ),
+          if (isSelected)
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              height: 4,
+              width: 4,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFF9800),
+                shape: BoxShape.circle,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 🔥 PROFILE ITEM (NO REFRESH)
+  Widget _buildProfileItem(int index, ImageProvider? imageProvider) {
+    final isSelected = _selectedIndex == index;
+
+    return GestureDetector(
+      onTap: () => _onItemTapped(index),
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.all(2.5),
+            height: isSelected ? 45 : 40,
+            width: isSelected ? 45 : 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSelected
+                    ? const Color(0xFFFF9800)
+                    : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: RepaintBoundary(
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.grey[200],
+                  image: imageProvider != null
+                      ? DecorationImage(image: imageProvider, fit: BoxFit.cover)
+                      : null,
+                ),
+                child: imageProvider == null
+                    ? Icon(
+                        Iconsax.user,
+                        size: 20,
+                        color: isSelected
+                            ? const Color(0xFFFF9800)
+                            : Colors.grey,
+                      )
+                    : null,
+              ),
+            ),
+          ),
+          if (isSelected)
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              height: 4,
+              width: 4,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFF9800),
+                shape: BoxShape.circle,
+              ),
+            ),
+        ],
       ),
     );
   }
 }
-

@@ -43,9 +43,9 @@ class AppRoutes {
         GoRoute(
           path: '/Chat',
           builder: (context, state) {
-            final args = state.extra as ChatPage;
-            return ChatPage(
-              sender: args.sender,
+            final args = state.extra as ChatScreen;
+            return ChatScreen(
+              senderEmail: args.senderEmail,
               projectName: args.projectName,
             );
           },
